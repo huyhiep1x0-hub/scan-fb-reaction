@@ -6,7 +6,10 @@
     stableRoundsToStop: 12,
     filePrefix: "facebook-reactions",
     askFileNameAtStart: true,
-    downloadCsv: true
+    downloadJson: false,
+    downloadCsv: false,
+    downloadVirtualProfileCsv: true,
+    virtualProfileFilePrefix: "nick_ao_"
   };
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -37,6 +40,32 @@
     return [
       headers.join(","),
       ...rows.map((row) => headers.map((header) => csvEscape(row[header])).join(","))
+    ].join("\r\n");
+  };
+
+  const toVirtualProfileCsv = (rows) => {
+    const headers = ["reaction", "name", "profile_url", "is_virtual_profile"];
+    const reactionStats = [...rows.reduce((map, row) => {
+      map.set(row.reaction, (map.get(row.reaction) || 0) + 1);
+      return map;
+    }, new Map()).entries()];
+
+    return [
+      ["Số lượng nick ảo", rows.length].map((value) => csvEscape(value)).join(","),
+      ["Thống kê chi tiết", ""].map((value) => csvEscape(value)).join(","),
+      ["Cảm xúc ảo", "Số lượng"].map((value) => csvEscape(value)).join(","),
+      ...reactionStats.map(([reaction, count]) =>
+        [`${reaction} ảo`, count].map((value) => csvEscape(value)).join(",")
+      ),
+      "",
+      headers.join(","),
+      ...rows.map((row) =>
+        headers
+          .map((header) =>
+            csvEscape(header === "profile_url" ? normalizeVirtualProfileUrl(row.profile_url) : row[header])
+          )
+          .join(",")
+      )
     ].join("\r\n");
   };
 
@@ -102,6 +131,16 @@
   const isVirtualProfileUrl = (href) => {
     const url = new URL(href, location.href);
     return url.pathname === "/profile.php" && /^\d+$/.test(url.searchParams.get("id") || "");
+  };
+
+  const normalizeVirtualProfileUrl = (href) => {
+    if (!href) return "";
+    const url = new URL(href, location.href);
+    const id = url.searchParams.get("id");
+    if (url.pathname === "/profile.php" && /^\d+$/.test(id || "")) {
+      return `https://www.facebook.com/${id}`;
+    }
+    return cleanUrl(href);
   };
 
   const getReactionDialog = () =>
@@ -314,7 +353,9 @@
 
   const json = JSON.stringify(output, null, 2);
   const csv = toCsv(rows);
+  const virtualProfileCsv = toVirtualProfileCsv(output.virtual_profiles);
   console.log("DONE", output);
+  console.log(`Số lượng nick ảo: ${output.virtual_profile_count}`);
 
   try {
     await navigator.clipboard.writeText(json);
@@ -326,15 +367,25 @@
   const shouldDownload = confirm(
     `Quet xong ${rows.length} dong.\n` +
       stats.map((stat) => `${stat.reaction}: ${stat.count}/${stat.expected ?? "?"}`).join("\n") +
-      `\nNick ao dang profile.php?id=: ${output.virtual_profile_count}` +
-      "\n\nTai file JSON ve may?"
+      `\nSố lượng nick ảo dạng profile.php?id=: ${output.virtual_profile_count}` +
+      "\n\nTai file nick_ao CSV ve may?"
   );
 
   if (shouldDownload) {
-    downloadTextFile(json, ensureExtension(outputBaseName, ".json"), "application/json;charset=utf-8");
+    if (CONFIG.downloadJson) {
+      downloadTextFile(json, ensureExtension(outputBaseName, ".json"), "application/json;charset=utf-8");
+    }
     if (CONFIG.downloadCsv) {
       await sleep(300);
       downloadTextFile(csv, ensureExtension(outputBaseName, ".csv"), "text/csv;charset=utf-8");
+    }
+    if (CONFIG.downloadVirtualProfileCsv) {
+      await sleep(300);
+      downloadTextFile(
+        virtualProfileCsv,
+        ensureExtension(`${CONFIG.virtualProfileFilePrefix}${outputBaseName}`, ".csv"),
+        "text/csv;charset=utf-8"
+      );
     }
   }
 })();
